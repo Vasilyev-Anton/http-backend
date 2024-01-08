@@ -1,146 +1,104 @@
-const http = require("http");
 const Koa = require("koa");
+const cors = require('@koa/cors');
+const Router = require("@koa/router");
 const koaBody = require("koa-body")
 const uuid = require("uuid");
+const fs = require('fs');
+const path = require('path');
 
 const app = new Koa();
-let pullTask = [];
+const router = new Router();
+const tasksFilePath = path.join(__dirname, 'tasks.json');
 const port = 3031;
+let pullTask = [];
+const saveTasksToFile = () => {
+  fs.writeFileSync(tasksFilePath, JSON.stringify(pullTask), 'utf8');
+}
 
 app.use(
   koaBody({
     urlencoded: true,
     multipart: true,
+    json: true,
   })
 );
 
-// Разрешение на использрвание REST
+app.use(cors());
+
+app.use(router.routes()).use(router.allowedMethods());
+
 app.use((ctx, next) => {
   if (ctx.request.method !== 'OPTIONS') {
     next();
-    return
+    return;
   }
-  ctx.response.set("Access-Control-Allow-Origin", "*"); //это заголовок ответа, который позволяет веб-страницам получить доступ к ресурсам другого домена
-  ctx.response.set('Access-Control-Allow-Methods', 'DELETE, PUT, PATCH, GET, POST'); //это заголовок ответа, который позволяет использовать разрешенные методы
+  ctx.response.set("Access-Control-Allow-Origin", "*");
+  ctx.response.set('Access-Control-Allow-Methods', 'DELETE, PUT, PATCH, GET, POST');
   ctx.response.status = 204;
   next();
 });
 
+router.get('/allTickets', ctx => {
+  try {
+    pullTask = JSON.parse(fs.readFileSync(tasksFilePath, 'utf8'));
+  } catch (e) {
+    if (e.code === 'ENOENT') {
+      console.log('Предыдущие тикеты не найдены, начинаем с пустого списка.');
+    } else {
+      throw e;
+    }
+  }
+  ctx.response.body = pullTask;
+});
 
-// Добавляем тикет
-app.use((ctx, next) => {
-  ctx.response.set("Access-Control-Allow-Origin", "*");
-  
-  if (ctx.request.method === 'POST') {
-    const {name, description, created} = ctx.request.body;
+router.post('/newTicket', ctx => {
+  const {name, description, created} = ctx.request.body;
   const status = false;
   const id = uuid.v4();
- 
-
   pullTask.push({ id, name, status, description, created });
 
-  console.log("pullTask - Submit");
-  console.log(pullTask);
-
+  saveTasksToFile();
   ctx.response.body = id;
-
-  next();
-  } else {
-    next();
-    return
-  }
-  
-  
 });
 
-// Удаляем тикет
-app.use((ctx, next) => {
-  ctx.response.set("Access-Control-Allow-Origin", "*");
-  if (ctx.request.method === 'DELETE') {
+router.delete('/tickets/:id', ctx => {
+  const { id } = ctx.params;
+  if (pullTask.every(sub => sub.id !== id)) {
+    ctx.response.body = "This ticket doesn't exists";
+    ctx.response.status = 410;
+  }
+  pullTask = pullTask.filter((sub) => sub.id !== id);
 
-    console.log('DELETE');
+  saveTasksToFile();
+  ctx.response.body = "Ticket is deleted";
+});
 
-   const { id } = ctx.request.query;
+router.patch('/', ctx => {
+  const id = ctx.request.query.id;
+  const status = ctx.request.query.status === 'true';
+  const index = pullTask.findIndex(el => el.id === id);
+  pullTask[index].status = status;
   
-    if (pullTask.every(sub => sub.id !== id)) {
-      ctx.response.body = "This tikket dosen't exists";
-      ctx.response.status = 410;
-      next();
-      return;
-    }
-    pullTask = pullTask.filter((sub) => sub.id !== id);
-  
-  
-    console.log("pullTask - delete");
-    console.log(pullTask);
+  saveTasksToFile(); 
+  ctx.response.body = "Ticket status updated";
+});
+
+router.put('/updateTicket/:id', ctx => {
+  const { id } = ctx.params;
+  const { name, description} = ctx.request.body;
+
+  const index = pullTask.findIndex(el => el.id === id);
+  if (index !== -1) {
+    pullTask[index].name = name;
+    pullTask[index].description = description;
     
-    ctx.response.body = "Ticket is deleted";
-    next();
+    saveTasksToFile();
+    ctx.response.body = "Ticket is updated";
+    ctx.response.status = 200;
   } else {
-    next();
-    return
+    ctx.response.body = "Ticket not found";
+    ctx.response.status = 404;
   }
 });
 
-// Чекбоксим
-app.use((ctx, next) => {
-  ctx.response.set("Access-Control-Allow-Origin", "*");
-  if (ctx.request.method === 'PATCH') {
-
-    console.log('PATCH');
-
-   const { id,  status} = ctx.request.query;
-
-   console.log(ctx.request.query);
-
-  const ind = pullTask.findIndex(el => el.id === id)
-   pullTask[ind].status = status;
-
-
-    console.log("pullTask - PATCHED");
-    console.log(pullTask);
-    
-    ctx.response.body = "Ticket is patched";
-    next();
-  } else {
-    next();
-    return
-  }
-});
-
-// Изменение информации
-app.use((ctx, next) => {
-  ctx.response.set("Access-Control-Allow-Origin", "*");
-  if (ctx.request.method === 'PUT') {
-
-    console.log('PUT');
-
-   const { id,  name, description} = ctx.request.query;
-
-   console.log(ctx.request.query);
-
-  const ind = pullTask.findIndex(el => el.id === id)
-   pullTask[ind].name = name;
-   pullTask[ind].description = description;
-
-    console.log("pullTask - PUT");
-    console.log(pullTask);
-    
-    ctx.response.body = "Ticket is patched";
-    next();
-  } else {
-    next();
-    return
-  }
-});
-
-
-
-const server = http.createServer(app.callback());
-server.listen(port, (error) => {
-  if (error) {
-    console.log(error);
-    return;
-  }
-  console.log(`Server has started in port: ${port}`);
-});
+app.listen(port);
